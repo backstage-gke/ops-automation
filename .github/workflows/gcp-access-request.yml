@@ -52,7 +52,7 @@ jobs:
         uses: google-github-actions/auth@v2
         with:
           # Replace with your actual Pool and Provider
-          workload_identity_provider: "${{ secrets.GCP_PROJECT_ID }}"
+          workload_identity_provider: "${{ secrets.GCP_WIF_PROVIDER }}"
           service_account: "${{ secrets.GCP_SA }}"
 
       - name: Apply IAM Binding
