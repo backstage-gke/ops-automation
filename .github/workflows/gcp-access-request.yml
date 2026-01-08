@@ -9,9 +9,6 @@ on:
       provider:
         description: 'Cloud Provider'
         required: true
-      gcp_project_id:
-        description: 'GCP Project ID'
-        required: true
       gcp_role:
         description: 'IAM Role'
         required: true
@@ -64,7 +61,7 @@ jobs:
           
           # Adding the binding using gcloud
           # Note: We append 'user:' to the email to form the correct member string
-          gcloud projects add-iam-policy-binding "${{ secrets.gcp_sa }}" \
+          gcloud projects add-iam-policy-binding "${{ secrets.GCP_SA }}" \
             --member="user:${{ inputs.requester_email }}" \
             --role="${{ inputs.gcp_role }}" \
             --condition=None
