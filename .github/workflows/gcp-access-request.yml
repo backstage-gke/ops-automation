@@ -29,7 +29,7 @@ jobs:
           echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
           echo "| **Requester** | \`${{ inputs.requester_email }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| **Target Cloud** | ${{ inputs.provider }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| **GCP Project** | \`${{ inputs.gcp_project_id }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **GCP Project** | \`${{ secrets.GCP_PROJECT_ID }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| **Requested Role** | \`${{ inputs.gcp_role }}\` |" >> $GITHUB_STEP_SUMMARY
           
           echo "" >> $GITHUB_STEP_SUMMARY
