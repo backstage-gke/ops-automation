@@ -1,0 +1,90 @@
+name: GCP Access Provisioning
+
+on:
+  workflow_dispatch:
+    inputs:
+      requester_email:
+        description: 'User Email'
+        required: true
+      provider:
+        description: 'Cloud Provider'
+        required: true
+      gcp_project_id:
+        description: 'GCP Project ID'
+        required: true
+      gcp_role:
+        description: 'IAM Role'
+        required: true
+
+permissions:
+  contents: read
+  id-token: write # Required for GCP OIDC
+
+jobs:
+  # JOB 1: SUMMARY (Runs immediately so Approver sees details)
+  request-summary:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate Request Summary
+        run: |
+          echo "### 🔐 Access Request Details" >> $GITHUB_STEP_SUMMARY
+          echo "| Parameter | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Requester** | \`${{ inputs.requester_email }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Target Cloud** | ${{ inputs.provider }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **GCP Project** | \`${{ inputs.gcp_project_id }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Requested Role** | \`${{ inputs.gcp_role }}\` |" >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "> ⚠️ **Approver Notice:** Please verify the requester actually requires this level of access." >> $GITHUB_STEP_SUMMARY
+  # JOB 2: PROVISIONING (Pauses for Approval)
+  provision-gcp:
+    needs: request-summary
+    if: inputs.provider == 'GCP'
+    runs-on: ubuntu-latest
+    
+    # THIS IS THE APPROVAL GATE
+    environment: production-gcp 
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Authenticate via OIDC (Secure, Keyless)
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          # Replace with your actual Pool and Provider
+          workload_identity_provider: "${{ secrets.gcp_project_id }}"
+          service_account: "${{ secrets.gcp_sa }}"
+
+      - name: Apply IAM Binding
+        run: |
+          echo "Applying IAM binding for ${{ inputs.requester_email }}..."
+          
+          # Adding the binding using gcloud
+          # Note: We append 'user:' to the email to form the correct member string
+          gcloud projects add-iam-policy-binding "${{ secrets.gcp_sa }}" \
+            --member="user:${{ inputs.requester_email }}" \
+            --role="${{ inputs.gcp_role }}" \
+            --condition=None
+  # ------------------------------------------------------------------
+  # FUTURE PLACEHOLDERS (Commented out per request)
+  # ------------------------------------------------------------------
+  # provision-aws:
+  #   needs: request-summary
+  #   if: inputs.provider == 'AWS'
+  #   runs-on: ubuntu-latest
+  #   environment: production-aws
+  #   steps:
+  #     - name: AWS Placeholder
+  #       run: echo "AWS logic would go here..."
+  
+  # provision-azure:
+  #   needs: request-summary
+  #   if: inputs.provider == 'Azure'
+  #   runs-on: ubuntu-latest
+  #   environment: production-azure
+  #   steps:
+  #     - name: Azure Placeholder
+  #       run: echo "Azure logic would go here..."
