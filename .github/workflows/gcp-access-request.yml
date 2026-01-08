@@ -59,12 +59,10 @@ jobs:
         run: |
           echo "Applying IAM binding for ${{ inputs.requester_email }}..."
           
-          # Adding the binding using gcloud
-          # Note: We append 'user:' to the email to form the correct member string
-          gcloud projects add-iam-policy-binding "${{ secrets.GCP_SA }}" \
+          # FIX: Removed --condition=None because Basic Roles (Viewer/Owner) don't support it
+          gcloud projects add-iam-policy-binding "${{ inputs.gcp_project_id }}" \
             --member="user:${{ inputs.requester_email }}" \
-            --role="${{ inputs.gcp_role }}" \
-            --condition=None
+            --role="${{ inputs.gcp_role }}"
   # ------------------------------------------------------------------
   # FUTURE PLACEHOLDERS (Commented out per request)
   # ------------------------------------------------------------------
