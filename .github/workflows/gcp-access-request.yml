@@ -12,6 +12,12 @@ on:
       gcp_role:
         description: 'IAM Role'
         required: true
+      designation:
+        description: 'User Designation'
+        required: true
+      duration:
+        description: 'Access Duration'
+        required: true
 
 permissions:
   contents: read
@@ -28,12 +34,15 @@ jobs:
           echo "| Parameter | Value |" >> $GITHUB_STEP_SUMMARY
           echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
           echo "| **Requester** | \`${{ inputs.requester_email }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Designation** | ${{ inputs.designation }} |" >> $GITHUB_STEP_SUMMARY
           echo "| **Target Cloud** | ${{ inputs.provider }} |" >> $GITHUB_STEP_SUMMARY
           echo "| **GCP Project** | \`${{ secrets.GCP_PROJECT_ID }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| **Requested Role** | \`${{ inputs.gcp_role }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Duration** | ⏳ ${{ inputs.duration }} |" >> $GITHUB_STEP_SUMMARY
           
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "> ⚠️ **Approver Notice:** Please verify the requester actually requires this level of access." >> $GITHUB_STEP_SUMMARY
+          echo "> ⚠️ **Approver Notice:** Access will automatically expire after **${{ inputs.duration }}**." >> $GITHUB_STEP_SUMMARY
+
   # JOB 2: PROVISIONING (Pauses for Approval)
   provision-gcp:
     needs: request-summary
@@ -47,39 +56,58 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Authenticate via OIDC (Secure, Keyless)
+      # ----------------------------------------------------------------
+      # 1. CALCULATE EXPIRATION DATE
+      # ----------------------------------------------------------------
+      - name: Calculate Expiry Timestamp
+        id: calc_expiry
+        run: |
+          DURATION="${{ inputs.duration }}"
+          
+          if [[ "$DURATION" == "1 Week" ]]; then
+            EXPIRY_DATE=$(date -d "+1 week" +%Y-%m-%dT%H:%M:%SZ)
+          elif [[ "$DURATION" == "1 Month" ]]; then
+            EXPIRY_DATE=$(date -d "+1 month" +%Y-%m-%dT%H:%M:%SZ)
+          elif [[ "$DURATION" == "3 Months" ]]; then
+            EXPIRY_DATE=$(date -d "+3 months" +%Y-%m-%dT%H:%M:%SZ)
+          else
+            # Default to 1 day if something goes wrong
+            EXPIRY_DATE=$(date -d "+1 day" +%Y-%m-%dT%H:%M:%SZ)
+          fi
+          
+          echo "Calculated Expiry: $EXPIRY_DATE"
+          echo "expiry_ts=$EXPIRY_DATE" >> $GITHUB_OUTPUT
+
+      # ----------------------------------------------------------------
+      # 2. AUTHENTICATE
+      # ----------------------------------------------------------------
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
-          # Replace with your actual Pool and Provider
           workload_identity_provider: "${{ secrets.GCP_WIF_PROVIDER }}"
           service_account: "${{ secrets.GCP_SA }}"
 
-      - name: Apply IAM Binding
+      # ----------------------------------------------------------------
+      # 3. APPLY IAM BINDING WITH CONDITION
+      # ----------------------------------------------------------------
+      - name: Apply Conditional IAM Binding
         run: |
-          echo "Applying IAM binding for ${{ inputs.requester_email }}..."
+          EMAIL="${{ inputs.requester_email }}"
+          ROLE="${{ inputs.gcp_role }}"
+          PROJECT="${{ secrets.GCP_PROJECT_ID }}"
+          DESIGNATION="${{ inputs.designation }}"
+          EXPIRY="${{ steps.calc_expiry.outputs.expiry_ts }}"
           
-          # FIX: Removed --condition=None because Basic Roles (Viewer/Owner) don't support it
-          gcloud projects add-iam-policy-binding "${{ secrets.GCP_PROJECT_ID }}" \
-            --member="user:${{ inputs.requester_email }}" \
-            --role="${{ inputs.gcp_role }}"
-  # ------------------------------------------------------------------
-  # FUTURE PLACEHOLDERS (Commented out per request)
-  # ------------------------------------------------------------------
-  # provision-aws:
-  #   needs: request-summary
-  #   if: inputs.provider == 'AWS'
-  #   runs-on: ubuntu-latest
-  #   environment: production-aws
-  #   steps:
-  #     - name: AWS Placeholder
-  #       run: echo "AWS logic would go here..."
-  
-  # provision-azure:
-  #   needs: request-summary
-  #   if: inputs.provider == 'Azure'
-  #   runs-on: ubuntu-latest
-  #   environment: production-azure
-  #   steps:
-  #     - name: Azure Placeholder
-  #       run: echo "Azure logic would go here..."
+          echo "Applying $ROLE to $EMAIL on $PROJECT..."
+          echo "Condition: Access expires at $EXPIRY"
+
+          # Construct the IAM Condition
+          # Format: request.time < timestamp("YYYY-MM-DDThh:mm:ssZ")
+          CONDITION_EXPRESSION="request.time < timestamp(\"$EXPIRY\")"
+          CONDITION_TITLE="Expires_on_${EXPIRY//:/_}"
+          CONDITION_DESC="Temporary access for $DESIGNATION until $EXPIRY"
+
+          gcloud projects add-iam-policy-binding "$PROJECT" \
+            --member="user:$EMAIL" \
+            --role="$ROLE" \
+            --condition="expression=$CONDITION_EXPRESSION,title=$CONDITION_TITLE,description=$CONDITION_DESC"
