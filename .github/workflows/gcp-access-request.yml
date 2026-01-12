@@ -35,13 +35,18 @@ jobs:
           echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
           echo "| **Requester** | \`${{ inputs.requester_email }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| **Designation** | ${{ inputs.designation }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Target Cloud** | ${{ inputs.provider }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| **GCP Project** | \`${{ secrets.GCP_PROJECT_ID }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Requested Role** | \`${{ inputs.gcp_role }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Duration** | ⏳ ${{ inputs.duration }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Role** | \`${{ inputs.gcp_role }}\` |" >> $GITHUB_STEP_SUMMARY
           
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "> ⚠️ **Approver Notice:** Access will automatically expire after **${{ inputs.duration }}**." >> $GITHUB_STEP_SUMMARY
+          # Logic to display correct duration status
+          if [[ "${{ inputs.gcp_role }}" == "roles/editor" || "${{ inputs.gcp_role }}" == "roles/viewer" ]]; then
+             echo "| **Duration** | ♾️ **PERMANENT** (Basic Role) |" >> $GITHUB_STEP_SUMMARY
+             echo "" >> $GITHUB_STEP_SUMMARY
+             echo "> ⚠️ **Warning:** User selected a Basic Role. Time-based expiry **cannot** be applied." >> $GITHUB_STEP_SUMMARY
+          else
+             echo "| **Duration** | ⏳ ${{ inputs.duration }} |" >> $GITHUB_STEP_SUMMARY
+             echo "" >> $GITHUB_STEP_SUMMARY
+             echo "> ✅ **Info:** Access will automatically expire after ${{ inputs.duration }}." >> $GITHUB_STEP_SUMMARY
+          fi
 
   # JOB 2: PROVISIONING (Pauses for Approval)
   provision-gcp:
@@ -62,21 +67,16 @@ jobs:
       - name: Calculate Expiry Timestamp
         id: calc_expiry
         run: |
-          DURATION="${{ inputs.duration }}"
-          
-          if [[ "$DURATION" == "1 Week" ]]; then
-            EXPIRY_DATE=$(date -d "+1 week" +%Y-%m-%dT%H:%M:%SZ)
-          elif [[ "$DURATION" == "1 Month" ]]; then
-            EXPIRY_DATE=$(date -d "+1 month" +%Y-%m-%dT%H:%M:%SZ)
-          elif [[ "$DURATION" == "3 Months" ]]; then
-            EXPIRY_DATE=$(date -d "+3 months" +%Y-%m-%dT%H:%M:%SZ)
+          if [[ "${{ inputs.duration }}" == "1 Week" ]]; then
+            EXPIRY=$(date -d "+1 week" +%Y-%m-%dT%H:%M:%SZ)
+          elif [[ "${{ inputs.duration }}" == "1 Month" ]]; then
+            EXPIRY=$(date -d "+1 month" +%Y-%m-%dT%H:%M:%SZ)
+          elif [[ "${{ inputs.duration }}" == "3 Months" ]]; then
+            EXPIRY=$(date -d "+3 months" +%Y-%m-%dT%H:%M:%SZ)
           else
-            # Default to 1 day if something goes wrong
-            EXPIRY_DATE=$(date -d "+1 day" +%Y-%m-%dT%H:%M:%SZ)
+            EXPIRY=$(date -d "+1 day" +%Y-%m-%dT%H:%M:%SZ)
           fi
-          
-          echo "Calculated Expiry: $EXPIRY_DATE"
-          echo "expiry_ts=$EXPIRY_DATE" >> $GITHUB_OUTPUT
+          echo "expiry_ts=$EXPIRY" >> $GITHUB_OUTPUT
 
       # ----------------------------------------------------------------
       # 2. AUTHENTICATE
@@ -88,26 +88,36 @@ jobs:
           service_account: "${{ secrets.GCP_SA }}"
 
       # ----------------------------------------------------------------
-      # 3. APPLY IAM BINDING WITH CONDITION
+      # 3. APPLY IAM BINDING (CONDITIONAL LOGIC)
       # ----------------------------------------------------------------
-      - name: Apply Conditional IAM Binding
+      - name: Apply IAM Binding
         run: |
           EMAIL="${{ inputs.requester_email }}"
           ROLE="${{ inputs.gcp_role }}"
           PROJECT="${{ secrets.GCP_PROJECT_ID }}"
-          DESIGNATION="${{ inputs.designation }}"
           EXPIRY="${{ steps.calc_expiry.outputs.expiry_ts }}"
           
-          echo "Applying $ROLE to $EMAIL on $PROJECT..."
-          echo "Condition: Access expires at $EXPIRY"
+          echo "Processing role assignment..."
 
-          # Construct the IAM Condition
-          # Format: request.time < timestamp("YYYY-MM-DDThh:mm:ssZ")
-          CONDITION_EXPRESSION="request.time < timestamp(\"$EXPIRY\")"
-          CONDITION_TITLE="Expires_on_${EXPIRY//:/_}"
-          CONDITION_DESC="Temporary access for $DESIGNATION until $EXPIRY"
+          # CHECK: If Role is Viewer or Editor -> NO CONDITION
+          if [[ "$ROLE" == "roles/viewer" || "$ROLE" == "roles/editor" ]]; then
+            
+            echo "⚠️ Basic Role detected ($ROLE). applying PERMANENT access."
+            
+            gcloud projects add-iam-policy-binding "$PROJECT" \
+              --member="user:$EMAIL" \
+              --role="$ROLE"
 
-          gcloud projects add-iam-policy-binding "$PROJECT" \
-            --member="user:$EMAIL" \
-            --role="$ROLE" \
-            --condition="expression=$CONDITION_EXPRESSION,title=$CONDITION_TITLE,description=$CONDITION_DESC"
+          else
+            # Predefined Role -> APPLY CONDITION
+            echo "✅ Predefined Role detected ($ROLE). Applying expiry: $EXPIRY"
+
+            CONDITION_EXPR="request.time < timestamp(\"$EXPIRY\")"
+            CONDITION_TITLE="Expires_on_${EXPIRY//:/_}"
+            CONDITION_DESC="Temporary access for ${{ inputs.designation }}"
+
+            gcloud projects add-iam-policy-binding "$PROJECT" \
+              --member="user:$EMAIL" \
+              --role="$ROLE" \
+              --condition="expression=$CONDITION_EXPR,title=$CONDITION_TITLE,description=$CONDITION_DESC"
+          fi
