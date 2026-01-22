@@ -104,9 +104,11 @@ jobs:
             
             echo "⚠️ Basic Role detected ($ROLE). applying PERMANENT access."
             
+            # FIXED COMMAND BELOW: added --condition=None
             gcloud projects add-iam-policy-binding "$PROJECT" \
               --member="user:$EMAIL" \
-              --role="$ROLE"
+              --role="$ROLE" \
+              --condition=None
 
           else
             # Predefined Role -> APPLY CONDITION
